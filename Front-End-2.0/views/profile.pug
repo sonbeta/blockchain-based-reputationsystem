@@ -1,0 +1,129 @@
+extends layout
+
+block content
+  head
+    style
+        include ../public/stylesheets/normalize.css
+        include ../public/stylesheets/uikit.min.css
+        include ../public/stylesheets/theme.default.min.css
+    script(src="/javascripts/web3.min.js") 
+    script(src="/javascripts/jquery.min.js") 
+    script(src="/javascripts/uikit.min.js")
+    script(src="/javascripts/uikit-icons.min.js")
+    script(src="/javascripts/jquery.tablesorter.js")
+    script(src="/javascripts/reputationsystem_abi.js")
+    script(src="/javascripts/transaction_abi.js")
+    script(src="/javascripts/reputationsystemaddress.js")
+    script(src="/javascripts/functions.js")
+    script.                
+        const queryString = window.location.search;
+        const params = new URLSearchParams(queryString);
+        const user = params.get('user');
+
+        async function getUserDetails(){       
+            
+            var i = 0;
+            var noError = true;
+            var countTransactionSP = 0;
+            var countTransactionSC = 0;
+            var sumPerformanceBasedPayment = 0;
+            var sumNonPerformanceBasedPayment = 0;
+
+            var transactionHistory = await window.contract.methods.getTransactionHistory().call();
+            for(const transactionAddress of transactionHistory){
+                // load Transaction Smart Contract into variable "t"
+                var t = await loadTransaction(transactionAddress);
+                let status = await t.methods.status().call();
+                let serviceProviderAddress = await t.methods.serviceProviderAddress().call();
+                let serviceCustomerAddress = await t.methods.serviceCustomerAddress().call();
+                let amountPerformanceBasedPayment = await t.methods.amountPerformanceBasedPayment().call();
+                let amountNonPerformanceBasedPayment = await t.methods.amountNonPerformanceBasedPayment().call();
+
+                if (serviceProviderAddress == user){
+                    if (status == "Rated" ){
+                        // rating was paid
+                        countTransactionSP++;
+                        sumNonPerformanceBasedPayment += parseInt(amountNonPerformanceBasedPayment);
+                        sumPerformanceBasedPayment += parseInt(amountPerformanceBasedPayment);
+                    }else if (status == "Counterrated"){
+                        // deadline for rating is due
+                        countTransactionSP++;
+                        sumNonPerformanceBasedPayment += parseInt(amountNonPerformanceBasedPayment);
+                    }
+                }else if (serviceCustomerAddress == user){
+                    if (status == "Rated" || status == "Counterrated"){
+                        countTransactionSC++;
+                    }
+                }
+            }
+            $("#myTable").show();
+            $("#loading").hide();
+            $("#transactionsSP").html(countTransactionSP);
+            $("#transactionsSC").html(countTransactionSC);
+            $("#performanceBasedAmount").html(sumPerformanceBasedPayment);
+            $("#nonPerformanceBasedAmount").html(sumNonPerformanceBasedPayment);
+            $("#ratio").html((sumPerformanceBasedPayment/((sumPerformanceBasedPayment+sumNonPerformanceBasedPayment)/100)).toFixed(2));
+        }
+
+        async function redirect(){
+            window.location.href = "/transactionhistory?user=" + await getUsername(user);
+        }
+
+        async function redirectTransactionCreation(){
+            window.location.href = "/createtransaction?servicecustomer=" + user;
+        }
+
+        $(document).ready(function(){
+            $(async function() {
+                $("#verifiedSince").html(await getVerificationDate(user));
+                await getUserDetails();
+                $("#username").text("Username: " + await getUsername(user));
+            });
+        });        
+  body(class="uk-background-muted uk-padding uk-panel")
+    include menu.html
+
+    h1= title
+    h2#username
+    h5= 'Only Transactions that are complete (status == "Rated" or "Counterrated") are considered.'
+       
+
+    div(id="view" name="view")
+        <div uk-grid>
+            <div class="uk-width-2-1@m">
+                <div id="loading" style="text-align:center">
+                    <div uk-spinner="ratio: 3"></div>
+                </div>
+                <table class="uk-table uk-table-striped" id="myTable" style="word-wrap:break-word;display:none;">                       
+                    <tr>
+                        <th class="header">Verified since</td>
+                        <td id="verifiedSince"></td>
+                    </tr>                                        
+                    <tr>
+                        <th class="header">Transactions <br> as Service Provider</td>
+                        <td id="transactionsSP"></td>
+                    </tr>                    
+                    <tr>
+                        <th class="header">Transactions <br> as Service Customer</td>
+                        <td id="transactionsSC"></td>
+                    </tr>                    
+                    <tr>
+                        <th class="header">Performance Based Payment (PBP) Total</td>
+                        <td id="performanceBasedAmount"></td>
+                    </tr>
+                    <tr>
+                        <th class="header">Non Performance Based Payment (NPBP) Total</td>
+                        <td id="nonPerformanceBasedAmount"></td>
+                    </tr>
+                    <tr>
+                        <th class="header">Ratio (PB of total)</td>
+                        <td id="ratio"></td>
+                    </tr>
+
+                </table>
+            </div>
+        </div>    
+        <br>
+        <a onclick="redirect()" class="uk-button uk-button-danger">See Transaction History of this User</a><br><br>
+        <a onclick="redirectTransactionCreation()" class="uk-button uk-button-danger">Create Transaction with this User</a>
+            

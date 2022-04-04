@@ -1,0 +1,138 @@
+extends layout
+
+block content
+  head
+    style
+        include ../public/stylesheets/normalize.css
+        include ../public/stylesheets/uikit.min.css
+        include ../public/stylesheets/theme.default.min.css
+    script(src="/javascripts/web3.min.js") 
+    script(src="/javascripts/jquery.min.js") 
+    script(src="/javascripts/uikit.min.js")
+    script(src="/javascripts/uikit-icons.min.js")
+    script(src="/javascripts/jquery.tablesorter.js")
+    script(src="/javascripts/reputationsystem_abi.js")
+    script(src="/javascripts/reputationsystemaddress.js")
+    script(src="/javascripts/transaction_abi.js")
+    script(src="/javascripts/functions.js")
+    script.    
+        const queryString = window.location.search;
+        const params = new URLSearchParams(queryString);
+        const user = params.get('user');
+        var publicKey = null;
+        
+        async function getTransactionHistory(){       
+            updateStatus("Getting transaction history from blockchain...");
+
+            var i = 0;           
+            while (true){
+                try{
+                    var transactionAddress = await window.contract.methods.transactionHistory(i).call();
+                    var transactionDetail = await getTransactionData(transactionAddress);
+                    var serviceProvider = transactionDetail[0]; //address
+                    var serviceCustomer = transactionDetail[1]; //address
+                    var tempSP = await getUsername(transactionDetail[0]);
+                    var tempSC = await getUsername(transactionDetail[1]);
+                    if (tempSP != ""){
+                        serviceProvider = tempSP;
+                    }
+                    if (tempSC != ""){
+                        serviceCustomer = tempSC;
+                    }
+                    //console.log(transactionDetail);
+                    $("#transactionhistorybody").append(`
+                    <tr>
+                        <td class="tableentry"><a href=/transactiondetail?transaction=${transactionAddress}&id=${i}>${i}</a></td>
+                        <td class="tableentry"><a href=/profile?user=${transactionDetail[0]}>${serviceProvider}</a></td>
+                        <td class="tableentry"><a href=/profile?user=${transactionDetail[1]}>${serviceCustomer}</a></td>
+                        <td class="tableentry">${transactionDetail[11]}</td>
+                        <td class="tableentry">${transactionDetail[10]}</td>
+                        <td class="tableentry">${transactionDetail[14]}</td>
+                        <td class="tableentry">${transactionDetail[15]}</td>
+                        <td class="tableentry">${transactionDetail[16]}</td>
+                        <td class="tableentry">${transactionDetail[17]}</td>
+                        <td class="tableentry">${(parseInt(transactionDetail[16])/((parseInt(transactionDetail[16])+parseInt(transactionDetail[17]))/100)).toFixed(2)}</td>
+                    </tr>`);
+                    i++;
+                }catch(e){
+                    break;
+                    //updateStatus(e);
+                }          
+            }
+            updateStatus("Transaction history was fetched.");
+            $("#loading").hide();
+            $("#transactionhistorybody").show();
+
+            if (user != null){
+                $("#searchterm").val(user);
+                var value = user.toLowerCase();
+                $("#transactionhistorybody tr").filter(function() {
+                $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
+                });
+            }
+        }
+        
+        //searchable, sortable, clickable table functions
+        $(document).ready(function(){
+            // sort by search term
+            $("#searchterm").on("keyup", function() {
+                var value = $(this).val().toLowerCase();
+                $("#transactionhistorybody tr").filter(function() {
+                $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
+                });
+            });
+            // sort by header
+            $('th').click(function(){
+                var table = $(this).parents('table').eq(0)
+                var rows = table.find('tr:gt(0)').toArray().sort(comparer($(this).index()))
+                this.asc = !this.asc
+                if (!this.asc){rows = rows.reverse()}
+                for (var i = 0; i < rows.length; i++){table.append(rows[i])}
+            })
+            function comparer(index) {
+                return function(rowOne, rowTwo) {
+                    var valueOne = getCellValue(rowOne, index)
+                    var valueTwo = getCellValue(rowTwo, index)
+                    return $.isNumeric(valueOne) && $.isNumeric(valueTwo) ? valueOne - valueTwo : valueOne.toString().localeCompare(valueTwo)
+                }
+            }
+            function getCellValue(row, index){ return $(row).children('td').eq(index).text() }
+
+            $(function() {
+                $("#myTable").tablesorter({ sortList: [[0,0]] });
+            });
+        });
+  body(class="uk-background-muted uk-padding uk-panel")
+    include menu.html
+
+    h1= title
+
+    <p>Ratios are between 0 and 100. <br>100 means, that transactions were purely based on performance-based Transactions e.g. "full trust"<br>0 means, that transactions were purely based on non-performance-based Transactions e.g. "no trust"</p>
+
+    div(id="view" name="view")
+        <div class="searchable-header">
+        <input type="text" id="searchterm" placeholder="Search table...">
+            <table class="uk-table uk-table-striped uk-table-hover" id="myTable">
+                <thead>
+                    <tr>
+                        <th class="header">id<br>Click for details</th>
+                        <th class="header">Service Provider</th>
+                        <th class="header">Service Customer</th>
+                        <th class="header">Status</th>
+                        <th class="header">Last Update</th>
+                        <th class="header">Product Type</th>
+                        <th class="header">Service Type</th>
+                        <th class="header">Performance Based Payment (PBP)</th>
+                        <th class="header">Non Performance Based Payment (NPBP)</th>
+                        <th class="header">Ratio (PB of total)</th>
+                    </tr>
+                </thead>
+                <tbody id="transactionhistorybody" style="display:none">
+                </tbody>
+            </table>
+            <div id="loading" style="text-align:center">
+                <div uk-spinner="ratio: 3"></div>
+            </div>
+        </div>
+
+    <script>getTransactionHistory();</script>

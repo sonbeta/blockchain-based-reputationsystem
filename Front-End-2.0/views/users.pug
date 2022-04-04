@@ -1,0 +1,181 @@
+extends layout
+
+block content
+  head
+    style
+        include ../public/stylesheets/normalize.css
+        include ../public/stylesheets/uikit.min.css
+        include ../public/stylesheets/theme.default.min.css
+    script(src="/javascripts/web3.min.js") 
+    script(src="/javascripts/jquery.min.js") 
+    script(src="/javascripts/uikit.min.js")
+    script(src="/javascripts/uikit-icons.min.js")
+    script(src="/javascripts/jquery.tablesorter.js")
+    script(src="/javascripts/reputationsystem_abi.js")
+    script(src="/javascripts/reputationsystemaddress.js")    
+    script(src="/javascripts/transaction_abi.js")  
+    script(src="/javascripts/functions.js")
+    script.    
+        var publicKey = null;
+
+        async function getUsers(){
+            updateStatus("Getting users..");
+
+            try{
+                var users = [];
+                var i = 0;
+                while (true){
+                    try{
+                        users.push(await window.contract.methods.verifiedUsersList(i).call());
+                        i++;
+                    }catch(e){
+                        break;
+                    }
+                }
+                //var users = await window.contract.methods.getVerifiedUsers().call();
+
+                updateStatus(users);
+                for(const elem of users){
+                    var verificationDate = await getVerificationDate(elem);
+                    var userDetails = await getUserDetails(elem);
+                    var username = await getUsername(elem);
+                    $("#userstablebody").append(`
+                    <tr>
+                        <td class="tableentry">${username}</td>
+                        <td class="tableentry"><a href="/profile?user=${elem}">${elem}</a></td>
+                        <td class="tableentry">${verificationDate}</td>
+                        <td class="tableentry">${userDetails[0]+userDetails[1]}</td>
+                        <td class="tableentry">${userDetails[2]}</td>
+                        <td class="tableentry">${userDetails[3]}</td>
+                        <td class="tableentry">${(userDetails[2]/((userDetails[2]+userDetails[3])/100)).toFixed(2)}</td>
+                        <td class="tableentry">${(userDetails[4]/((userDetails[4]+userDetails[5])/100)).toFixed(2)}</td>
+                    </tr>`);
+                }       
+                // all data is loaded         
+                $("#loading").hide();
+                $("#userstablebody").show();
+            }catch(e){
+                updateStatus(e);
+            }
+        }
+
+        async function getUserDetails(user){       
+            updateStatus("Getting transaction history from blockchain...");
+            
+            var i = 0;
+            var noError = true;
+            var countTransactionSP = 0;
+            var countTransactionSC = 0;
+            var sumPerformanceBasedPaymentSP = 0;
+            var sumNonPerformanceBasedPaymentSP = 0;
+            var sumPerformanceBasedPaymentSC = 0;
+            var sumNonPerformanceBasedPaymentSC = 0;
+
+            while (true){
+                try{
+                    var transactionAddress = await window.contract.methods.transactionHistory(i).call();
+                    var transactionDetail = await getTransactionDataShort(transactionAddress);
+                    let status = transactionDetail[2];
+                    let serviceProviderAddress = transactionDetail[0];
+                    let serviceCustomerAddress = transactionDetail[1];
+                    let amountPerformanceBasedPayment = transactionDetail[5];
+                    let amountNonPerformanceBasedPayment = transactionDetail[6];
+
+                    if (serviceProviderAddress == user){
+                        if (status == "Rated" ){
+                            // rating was paid
+                            countTransactionSP++;
+                            sumNonPerformanceBasedPaymentSP += parseInt(amountNonPerformanceBasedPayment);
+                            sumPerformanceBasedPaymentSP += parseInt(amountPerformanceBasedPayment);
+                        }else if (status == "Counterrated"){
+                            // deadline for rating is due
+                            countTransactionSP++;
+                            sumNonPerformanceBasedPaymentSP += parseInt(amountNonPerformanceBasedPayment);
+                        }
+                    }else if (serviceCustomerAddress == user){
+                        if (status == "Rated" ){
+                            // rating was paid
+                            countTransactionSC++;
+                            sumNonPerformanceBasedPaymentSC += parseInt(amountNonPerformanceBasedPayment);
+                            sumPerformanceBasedPaymentSC += parseInt(amountPerformanceBasedPayment);
+                        }else if (status == "Counterrated"){
+                            // deadline for rating is due
+                            countTransactionSC++;
+                            sumNonPerformanceBasedPaymentSC += parseInt(amountNonPerformanceBasedPayment);
+                        }
+                    }
+
+                    i++;
+                }catch(e){
+                    break;
+                }
+            }
+            return [countTransactionSP, countTransactionSC, sumPerformanceBasedPaymentSP, sumNonPerformanceBasedPaymentSP, sumPerformanceBasedPaymentSC, sumNonPerformanceBasedPaymentSC];
+        }
+        
+        //searchable, sortable, clickable table functions
+        $(document).ready(function(){
+            // sort by search term
+            $("#searchterm").on("keyup", function() {
+                var value = $(this).val().toLowerCase();
+                $("#userstablebody tr").filter(function() {
+                $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
+                });
+            });
+            // sort by header
+            $('th').click(function(){
+                var table = $(this).parents('table').eq(0)
+                var rows = table.find('tr:gt(0)').toArray().sort(comparer($(this).index()))
+                this.asc = !this.asc
+                if (!this.asc){rows = rows.reverse()}
+                for (var i = 0; i < rows.length; i++){table.append(rows[i])}
+            })
+            function comparer(index) {
+                return function(rowOne, rowTwo) {
+                    var valueOne = getCellValue(rowOne, index)
+                    var valueTwo = getCellValue(rowTwo, index)
+                    return $.isNumeric(valueOne) && $.isNumeric(valueTwo) ? valueOne - valueTwo : valueOne.toString().localeCompare(valueTwo)
+                }
+            }
+            function getCellValue(row, index){ return $(row).children('td').eq(index).text() }
+
+            $(function() {
+                $("#myTable").tablesorter({ sortList: [[0,0]] });
+            });
+        });
+
+  body(class="uk-background-muted uk-padding uk-panel")
+    include menu.html
+
+    h1= title
+
+    p= "Ratio has value in range [0, 1]. 0 means there was no PBP e.g. no trust. 1 means there was no NPBP e.g. full trust"
+
+    div(id="view" name="view")
+        <div class="searchable-header">
+        <p>For calculation (simple summation) of values following criterias are considered:</p>
+        <p>- transactions in which user has been a Service Provider</p>
+        <p>- transactions that are complete (status == "Rated" or "Counterrated")</p>
+        <input type="text" id="searchterm" placeholder="Search table...">
+            <table class="uk-table uk-table-striped uk-table-hover" id="myTable">
+                <thead>
+                    <tr>
+                        <th class="header">Nickname</th>
+                        <th class="header">User Address</th>
+                        <th class="header">Verified since</th>
+                        <th class="header">Transaction Count</th>
+                        <th class="header">Performance Based Payment (PBP) Total</th>
+                        <th class="header">Non Performance Based Payment (NPBP) Total</th>
+                        <th class="header">Ratio SP (PB of total)</th>
+                        <th class="header">Ratio SC (PB of total)</th>
+                    </tr>
+                </thead>
+                <tbody id="userstablebody" style="display:none">
+                </tbody>
+            </table>               
+            <div id="loading" style="text-align:center">
+                    <div uk-spinner="ratio: 3"></div>
+            </div>
+        </div>
+
+    <script>getUsers();</script>

@@ -1,0 +1,243 @@
+extends layout
+
+block content
+  head
+    style
+        include ../public/stylesheets/normalize.css
+        include ../public/stylesheets/uikit.min.css
+    script(src="/javascripts/web3.min.js") 
+    script(src="/javascripts/jquery.min.js") 
+    script(src="/javascripts/uikit.min.js")
+    script(src="/javascripts/uikit-icons.min.js")
+    script(src="/javascripts/reputationsystem_abi.js")
+    script(src="/javascripts/reputationsystemaddress.js")
+    script.    
+        var publicKey = null;
+        async function getBalance(){
+            var result = await ethereum.request({method: 'eth_getBalance', params: [ethereum.selectedAddress, 'latest']})
+            var intResult = parseInt(result, 16)/1000000000000000000;
+            console.log("Your Balance is: " + result);
+        }
+
+        async function loadWeb3() {
+            if (window.ethereum) {
+                window.web3 = new Web3(window.ethereum);
+                window.ethereum.enable();
+            }
+        }
+
+        async function load() {
+            await loadWeb3();
+            window.contract = await loadContract();
+            updateStatus('Ready!');
+        }
+
+        function updateStatus(status) {
+            console.log(status);
+        }
+
+        async function loadContract() {
+            return await new window.web3.eth.Contract(reputationSystemABI, reputationSystemAddress);
+        }
+
+        load();
+
+        async function getCurrentAccount() {
+            const accounts = await window.web3.eth.getAccounts();
+            return accounts[0];
+        }
+
+        async function getVerifiedStatus(){
+            const address = await getCurrentAccount();
+            updateStatus("Calling 'verifiedUsers("+address+")");
+            const verifiedStatus = await window.contract.methods.verifiedUsers(address).call();
+            updateStatus("verfiedUsers("+address+"): returns: " + verifiedStatus);
+        }
+
+        async function getOwner(){
+            updateStatus("Calling 'getOwner()'");
+            const owner = await window.contract.methods.owner().call();
+            updateStatus("getOwner(): returns: "+owner);
+        }
+
+        async function verifyUser(address){            
+            const account = await getCurrentAccount();
+            //const address = account;
+            updateStatus("Calling 'verifyUser("+address+")'");
+            const verifiedStatus = await window.contract.methods.verifiedUsers(address).call();
+            //TODO returns object, instead of bool
+            try{
+                if (verifiedStatus == false){
+                    const verifyStatus = await window.contract.methods.verifyUser(address).send({from: ethereum.selectedAddress});
+                    updateStatus("'verifyUser("+address+")': returns: "+verifyStatus);
+                }else{
+                    updateStatus("'verifyUser("+address+")': returns: Cancelled. Reason: Already verified!");
+                }
+            }catch(e){
+                updateStatus("Make sure you have the right privileges to perform this action. The transaction was reverted.")
+            }
+        }
+
+        async function getPublicKey(){
+            const account = await getCurrentAccount();
+            ethereum
+            .request({
+                method: 'eth_getEncryptionPublicKey',
+                params: [account], // you must have access to the specified account
+            })
+            .then((result) => {
+                encryptionPublicKey = result;
+                document.getElementById("publickey").value = encryptionPublicKey;
+                //console.log(encryptionPublicKey);
+                publicKey = result;
+                //console.log(publicKey);
+            })
+            .catch((error) => {
+                if (error.code === 4001) {
+                // EIP-1193 userRejectedRequest error
+                console.log("We can't encrypt anything without the key.");
+                } else {
+                console.error(error);
+                }
+            });
+        }
+        function stringifiableToHex(value) {
+            return ethers.utils.hexlify(Buffer.from(JSON.stringify(value)));
+            }
+
+
+
+        async function decryptMessage(){
+            var encryptedMessage = document.getElementById("encryptedMessage").value;
+            const account = await getCurrentAccount();
+            try {
+                var decryptedMessage = await ethereum.request({
+                    method: 'eth_decrypt',
+                    params: [encryptedMessage, ethereum.selectedAddress],
+                });
+                
+                document.getElementById("decryptedMessage").value = decryptedMessage;
+                console.log(decryptedMessage);
+            } catch (e) {
+                console.log(e);
+            }
+        }
+        async function uploadPublicKey(){
+            if (publicKey === null){
+                console.log("Please get your public key first.");
+                return 0;
+            }
+            updateStatus("Calling 'addPublicKey()'");
+            console.log("ADDRESS: " + ethereum.selectedAddress);
+            console.log("PUBLICKEY: " + publicKey);
+            const owner = await window.contract.methods.addPublicKey(ethereum.selectedAddress, publicKey).send({from: ethereum.selectedAddress});
+            updateStatus("Public Key was uploaded.");
+        }
+
+        async function getPublicKeyReceiver(){
+            var address = document.getElementById("addressReceiver").value;
+            const publicKeyReceiver = await window.contract.methods.addressPublicKey(address).call();
+            document.getElementById("publickey").value = publicKeyReceiver;
+        }
+        
+        async function getEncryptedMessage(){
+            const encryptedMessage = await window.contract.methods.addressEncodedString(ethereum.selectedAddress).call();
+            if (encryptedMessage === ""){
+                console.log("There are no messages for you.");
+            }else{
+                document.getElementById("encryptedMessage").value = encryptedMessage;
+                decryptMessage();
+                console.log(encryptedMessage);
+            }
+        }
+
+        async function sendEncryptedMessage(){
+            var address = document.getElementById("addressReceiverPost").textContent;
+            var message = document.getElementById("encodedString").textContent;
+            console.log("ADDRESS: " + address);
+            console.log("MESSAGE: " + message);
+            const owner = await window.contract.methods.addAddressEncodedString(address, message).send({from: ethereum.selectedAddress});
+        }
+
+        async function getUser(){
+            const getUser = await window.contract.methods.getUser(ethereum.selectedAddress).call();
+        }
+
+        async function verifyAll(){
+            var addresses = ["0x1e454cB0493ff2348F9441eE94faAC4A908aA065", "0xf4d207981baC0Bb447b313B51e051F6EfEC0B65a", "0x107d4Fe07B723A6FaE0f2c3eBA999EEFF35A34C3"];
+            
+            for (const element of addresses){
+                try {
+                    var init = await window.contract.methods.verifyUser(element).send({from: ethereum.selectedAddress});
+                    updateStatus(element + " was verified.");
+                }catch(e){
+                    updateStatus(e);
+                }
+            }
+        }
+
+        async function createTransactions(){
+            var addresses = ["0x1e454cB0493ff2348F9441eE94faAC4A908aA065", "0xf4d207981baC0Bb447b313B51e051F6EfEC0B65a", "0x107d4Fe07B723A6FaE0f2c3eBA999EEFF35A34C3"];
+            
+            for (const element of addresses){
+                if (ethereum.selectedAddress.toLowerCase() != element.toLowerCase()){
+                    try {
+                        var pf =  1000;
+                        var npf = 9000;
+                        var init = await window.contract.methods.createTransaction(element, 7, npf, pf).send({from: ethereum.selectedAddress});
+                        updateStatus("transaction was created between: " + ethereum.selectedAddress + " and " + element);
+                    }catch(e){
+                        updateStatus(e);
+                    }
+                }else{
+                    updateStatus("skipped because addresses are same");
+                }
+            }
+        }
+
+  body(class="uk-background-muted uk-padding uk-panel")
+    include menu.html
+    h1= title
+
+
+    div(id="view" name="view")
+        div(class="uk-flex uk-flex-column uk-padding-small uk-width-1-2")
+            button(class="uk-button uk-button-default" onclick="verifyAll()") verifyAll
+            button(class="uk-button uk-button-default" onclick="createTransactions()") createTransactions
+            button(class="uk-button uk-button-default" onclick="ethereum.request({ method: 'eth_requestAccounts' });") Connect to Ethereum
+            button(class="uk-button uk-button-default" onclick="getBalance()") Get Balance
+            button(class="uk-button uk-button-default" onclick="getVerifiedStatus()") Get VerifiedStatus of this account
+            button(class="uk-button uk-button-default" onclick="verifyUser(ethereum.selectedAddress)") Verify this account
+ 
+
+
+        br
+        div(class="uk-background-primary uk-flex uk-flex-column uk-padding-small uk-width-1-2")
+            button(class="uk-button uk-button-danger" onclick=("getPublicKey()")) Get public key
+            button(class="uk-button uk-button-danger" onclick=("uploadPublicKey()")) Upload Public Key
+        br
+        div(class="uk-background-primary uk-flex uk-flex-column uk-padding-small uk-width-1-2")
+            button(class="uk-button uk-button-danger" onclick=("getEncryptedMessage()")) Get Encrypted Message
+            input(class="uk-input" type='text' id="encryptedMessage" placeholder="Encrypted message")
+            button(class="uk-button uk-button-danger" onclick=("decryptMessage()")) Decrypt Message
+            input(class="uk-input" type='text' id="decryptedMessage" placeholder="Decrypted message")
+        br
+        div(class="uk-background-primary uk-flex uk-flex-column uk-padding-small uk-width-1-2")
+            form(action="http://localhost:3000", method="post") 
+                input(class="uk-input" type='text' id="addressReceiver" name='addressReceiver' placeholder="Address to send encrypted message")
+                input(class="uk-input" type='text' id='publickey' name='publickey' placeholder='Click button to retreive public key' value='')
+                br
+                input(class="uk-input" type='text' id='message' name='message' placeholder='Enter your message')
+                br
+                button(class="uk-button uk-button-danger" id="submit" type="submit") Encrypt Message
+            button(class="uk-button uk-button-danger" onclick=("getPublicKeyReceiver()")) Get public key from receiver
+            button(class="uk-button uk-button-danger" onclick=("encryptMessage()"))
+        
+        div(class="uk-background-primary uk-flex uk-flex-column uk-padding-small uk-width-1-2")
+            p Conclusion
+            p(class="uk-width-auto") Receiver
+            p(class="uk-width-1-2" id="addressReceiverPost") #{addressReceiver2}
+            p(class="uk-width-auto") Encoded String 
+            p(class="uk-width-1-2" id="encodedString") #{cyphered}
+
+            button(class="uk-button uk-button-danger" onclick=("sendEncryptedMessage()")) Upload message to Blockchain

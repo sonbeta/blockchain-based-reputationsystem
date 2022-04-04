@@ -1,0 +1,254 @@
+extends layout
+
+block content
+  head
+    style
+        include ../public/stylesheets/normalize.css
+        include ../public/stylesheets/uikit.min.css
+        include ../public/stylesheets/theme.default.min.css
+        include ../public/stylesheets/override.css
+    script(src="/javascripts/web3.min.js") 
+    script(src="/javascripts/jquery.min.js") 
+    script(src="/javascripts/uikit.min.js")
+    script(src="/javascripts/uikit-icons.min.js")
+    script(src="/javascripts/jquery.tablesorter.js")
+    script(src="/javascripts/reputationsystem_abi.js")
+    script(src="/javascripts/transaction_abi.js")
+    script(src="/javascripts/reputationsystemaddress.js")
+    script(src="/javascripts/functions.js")
+    script.            
+        const queryString = window.location.search;
+        const params = new URLSearchParams(queryString);
+        const user = params.get('user');
+        const id = params.get('id');
+        const transaction = params.get('transaction');
+        const servicecustomer = params.get('servicecustomer');
+        const nonperformancebased = params.get('npb');
+        const performancebased = params.get('pb');
+        const producttype = params.get('pt');
+        const servicetype = params.get('st');
+        const metadata = params.get('metadata');
+        
+
+        async function createTransaction(){
+            try{
+                var metadata = $("#metadata").val();
+                var servicecustomer = $("#servicecustomer").val();
+                if (metadata != "" && servicecustomer != ""){
+                    var pkSC = await window.contract.methods.addressPublicKey(servicecustomer).call();
+                    var pkSP = await window.contract.methods.addressPublicKey(ethereum.selectedAddress).call();
+                    var encryptedSC;
+                    var encryptedSP;
+                    var hash;
+
+                    if (pkSC == ""){
+                        UIkit.modal.dialog("<p style='padding:2em;'>The service customer needs to upload his public key first.</p>");
+                        return
+                    }else{
+                        encryptedSC = await encryptMessage(pkSC, metadata);
+                    }
+                    if (pkSP == ""){
+                        UIkit.modal.dialog("<p style='padding:2em;'><a onclick='getPublicKey()'>Upload your Public Key</a> before encryption.</p>");
+                        return
+                    }else{
+                        encryptedSP = await encryptMessage(pkSP, metadata);
+                    }
+                    console.log(encryptedSC);
+                    console.log(encryptedSP);
+
+                    var deadlinePayment = $("#deadlinePayment").val();
+                    var nonperformancebased = $("#nonperformancebasedamount").val();
+                    var performancebased = $("#performancebasedamount").val();
+                    var serviceType = $("#servicetype").val();
+                    var productType = $("#producttype").val();
+                    if (servicecustomer != "" && deadlinePayment != "" && nonperformancebased != "" && performancebased != "" && encryptedSC != "" && encryptedSP != "" && serviceType != "" && productType != ""){
+                        await window.contract.methods.createTransaction(servicecustomer, deadlinePayment, performancebased, nonperformancebased, encryptedSC, encryptedSP, serviceType, productType).send({from: ethereum.selectedAddress});
+                        UIkit.modal.dialog("<p style='padding:2em;'>Transaction was created successfully. Go to <a href='/mytransactions'>My Transactions</a> to see it.</p>");
+                    }else{
+                        UIkit.modal.dialog("<p style='padding:2em;'>Error. <br> Fill all blanks.</p>");
+                    }
+                }else{
+                    UIkit.modal.dialog("<p style='padding:2em;'>Error. <br> Fill all blanks.</p>");
+                }
+            }catch(e){
+                console.log(e);
+                UIkit.modal.dialog("<p style='padding:2em;'>Error. <br>'"+e+"'<br> Please try again.</p>");
+            }
+        }
+
+        async function encryptMessage(pk, msg){
+            var result;
+            await $.post("/encrypt",
+                {
+                    publickey: pk,
+                    message: msg
+                },
+                function(data, status){
+                    result = data;
+                });
+            return result;
+        }
+        async function decryptMetadata(){
+            var encryptedMessage = $("#metadata").val();
+            try {
+                var decryptedMessage = await ethereum.request({
+                    method: 'eth_decrypt',
+                    params: [encryptedMessage, ethereum.selectedAddress]
+                });
+                
+                $("#metadata").val(decryptedMessage);
+                $("#decryption").hide();
+                console.log(decryptedMessage);
+            }catch (e) {
+                console.log(e);
+            }
+        }
+        async function getTransactionDetailsForUser(id){       
+            updateStatus("Getting transaction details for: " + id);
+            try{
+                var transactionDetail = await window.contract.methods.getTransactionDetailsByID(id).call();
+                $("#transactionid").html(id);
+                
+                $("#serviceprovider").text(ethereum.selectedAddress);
+                $("#servicecustomer").val(transactionDetail.serviceCustomerAddress);
+                $("#producttype").html(transactionDetail.productType);
+                $("#servicetype").html(transactionDetail.serviceType);
+
+                $("#dateCreation").html(getTime(transactionDetail.dateCreation));
+                $("#lastUpdate").html(getTime(transactionDetail.lastUpdate));
+                $("#dateValidationServiceCustomer").html(getTime(transactionDetail.dateValidationServiceCustomer));
+                $("#dateValidationServiceProvider").html(getTime(transactionDetail.dateValidationServiceProvider));
+                $("#datePaymentPerformanceBased").html(getTime(transactionDetail.datePaymentPerformanceBased));
+                $("#datePaymentNonPerformanceBased").html(getTime(transactionDetail.datePaymentNonPerformanceBased));
+                $("#deadlineFulfillment").html(getTime(transactionDetail.deadlineFulfillment));
+                $("#deadlineValidation").html(getTime(transactionDetail.deadlineValidation));
+                $("#deadlinePayment").html(getTime(transactionDetail.deadlinePayment));
+
+
+                if (id != ""){
+                    $("#hint").append("On base of Transaction: <a href='/transactiondetail?transaction=" + transactionDetail.transactionAddress + "&id="+id+"'>" + transactionDetail.transactionAddress + "</a>, ID: " + id);
+                }
+                updateStatus("Fetched transaction Details!");
+            }catch(e){
+                updateStatus("Transaction detail for user could not be fetched.");
+            }
+        }
+
+        $(document).ready(function(){
+            // sort by search term
+            $(async function() {
+                $("#myaddress").append("<a href='/mytransactions'>" + await ethereum.selectedAddress + "</a>");
+                //await getTransactionDetailsForUser(id);
+            });
+            $(async function(){
+                $("#serviceprovider").text(await ethereum.selectedAddress);
+                if (servicecustomer != ""){
+                    $("#servicecustomer").val(servicecustomer);
+                }
+                if (metadata != "" && metadata != undefined && metadata != "Access denied."){
+                    $("#metadata").val(metadata);
+                    $("#decryption").show();
+                }
+                if (nonperformancebased != ""){
+                    $("#nonperformancebasedamount").val(nonperformancebased);
+                }
+                if (performancebased != ""){
+                    $("#performancebasedamount").val(performancebased);
+                }
+                if (producttype != ""){
+                    $("#producttype").val(producttype);
+                }
+                if (servicetype != ""){
+                    $("#servicetype").val(servicetype);
+                }
+            });
+        });
+  body(class="uk-background-muted uk-padding uk-panel")
+    include menu.html
+
+    h1= title
+    
+
+    div(id="view" name="view")
+        <p id="myaddress">My Address </p>
+        <p id="hint"></p>
+        <div uk-grid>
+            <div class="uk-width-2-1@m">
+                <table class="uk-table uk-table-striped" id="myTable" style="word-wrap:break-word; td{padding:0}">         
+                    <tr>
+                        <th class="header">Service Customer</td>
+                        <td>
+                            <div class="">
+                                <input class="uk-input" id="servicecustomer" type="text" placeholder="Servicecustomer">
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Service Provider (you)</td>
+                        <td>
+                            <div class="uk-margin">
+                                <p id="serviceprovider" type="text"></p>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Metadata</td>
+                        <td>
+                            <div class="uk-margin">
+                            <textarea class="uk-textarea" rows="5" id="metadata" placeholder="Metadata (will be encrypted)"></textarea>
+                            <div id="decryption" style="display:none;padding-top:1em;"><a onclick="decryptMetadata()" class="uk-button uk-button-danger">Click to decrypt</a></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Non Performance Based Amount</th>
+                        <td>
+                            <div class="uk-margin">
+                                <input class="uk-input" id="nonperformancebasedamount" type="text" placeholder="In Gwei">
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Performance Based Amount</th>
+                        <td>
+                            <div class="uk-margin">
+                                <input class="uk-input" id="performancebasedamount" type="text" placeholder="In Gwei">
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Product Type</th>
+                        <td>
+                            <div class="uk-margin">
+                                <input class="uk-input" id="producttype" type="text" placeholder="Product Type">
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Service Type</th>
+                        <td>
+                            <div class="uk-margin">
+                                <input class="uk-input" id="servicetype" type="text" placeholder="Service Type">
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Deadline Payment</th>
+                        <td>
+                            <div class="uk-margin">
+                                <input class="uk-input" id="deadlinePayment" type="text" placeholder="Number in days from now">
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th class="header">Deadline Fulfillment</th>
+                        <td id="deadlinePayment">14 days after Payment</td>
+                    </tr>
+                    <tr>
+                        <th class="header">Deadline Tipping</th>
+                        <td id="deadlineTipping">3 days after Fulfillment</td>
+                    </tr>
+                </table>
+                <button class="uk-button uk-button-danger" onclick="createTransaction()">Create Transaction</button><br><br>
+            </div>
+        </div>

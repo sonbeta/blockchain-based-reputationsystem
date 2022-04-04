@@ -1,0 +1,386 @@
+extends layout
+
+block content
+  head
+    style
+        include ../public/stylesheets/normalize.css
+        include ../public/stylesheets/uikit.min.css
+        include ../public/stylesheets/theme.default.min.css
+    script(src="/javascripts/web3.min.js") 
+    script(src="/javascripts/jquery.min.js") 
+    script(src="/javascripts/uikit.min.js")
+    script(src="/javascripts/uikit-icons.min.js")
+    script(src="/javascripts/jquery.tablesorter.js")
+    script(src="/javascripts/reputationsystem_abi.js")
+    script(src="/javascripts/transaction_abi.js")
+    script(src="/javascripts/reputationsystemaddress.js")
+    script(src="/javascripts/functions.js")
+    script.            
+        const queryString = window.location.search;
+        const params = new URLSearchParams(queryString);
+        const user = params.get('user');
+        const id = params.get('id');
+        const transaction = params.get('transaction');
+        var serviceCustomerAddress;
+        var role = "";
+        var tippingdeadline;
+        var transactionAddress;
+        var transactionConnection;
+
+        async function loadEverything(){
+            if (id != null){
+                transactionAddress = await window.contract.methods.transactionHistory(id).call();
+                transactionConnection = await loadTransaction(transactionAddress);
+            }
+        }
+
+        async function redirectTransactionCreationSimilar(){
+            window.location.href = "/createtransaction?id=" + id
+                    + "&servicecustomer=" + serviceCustomerAddress
+                    + "&metadata=" + $("#metadata").text()
+                    + "&npb=" + $("#nonPerformanceBased").text()
+                    + "&pb=" + $("#performanceBased").text()
+                    + "&pt=" + $("#producttype").text()
+                    + "&st=" + $("#servicetype").text();
+        }
+
+
+        async function decryptMetadata(){
+            var encryptedMessage = $("#metadata").text();
+            try {
+                var decryptedMessage = await ethereum.request({
+                    method: 'eth_decrypt',
+                    params: [encryptedMessage, ethereum.selectedAddress]
+                });
+                
+                $("#metadata").text(decryptedMessage);
+                console.log(decryptedMessage);
+            }catch (e) {
+                console.log(e);
+            }
+        }
+
+        async function loadTransactionDetails(id){       
+            updateStatus("Getting transaction details for: " + id);
+            try{
+                await loadEverything();
+                transactionDetail = await getTransactionData(transactionAddress);
+                console.log(transactionDetail);
+                $("#transactionid").html(id);
+                $("#transactionaddress").html(transactionAddress);
+                var spAddress = transactionDetail[0];
+                var scAddress = transactionDetail[1];
+                serviceCustomerAddress = transactionDetail[1];
+                var spUsername = await getUsername(transactionDetail[0]);
+                var scUsername = await getUsername(transactionDetail[1]);
+                if (spUsername != ""){
+                    spAddress = spUsername;
+                }
+                if (scUsername != ""){
+                    scAddress = scUsername;
+                }
+                $("#serviceprovider").html("<a href=/profile?user=" + transactionDetail[0] + ">" + spAddress + "</a>");
+                $("#servicecustomer").html("<a href=/profile?user=" + transactionDetail[1] + ">" + scAddress + "</a>");
+                $("#producttype").html(transactionDetail[14]);
+                $("#servicetype").html(transactionDetail[15]);
+                $("#performanceBased").html(transactionDetail[16]);
+                $("#nonPerformanceBased").html(transactionDetail[17]);
+                $("#total").html(parseInt(transactionDetail[17])+parseInt(transactionDetail[16]));
+                $("#ratio").html(parseInt(transactionDetail[16])/((parseInt(transactionDetail[16])+parseInt(transactionDetail[17]))/100).toFixed(2));
+
+                $("#status").html(transactionDetail[11]);
+
+
+
+                if ((transactionDetail[1]).toLowerCase() == (ethereum.selectedAddress).toLowerCase()){
+                    role = "SC";
+                    $("#metadata").html("<a onclick='decryptMetadata()'>" + transactionDetail[13] + "</a>");
+                    $("#metadataheader").append("<br>(Click to decrypt)");
+                    $("#special").show();
+                }else if ((transactionDetail[0]).toLowerCase() == (ethereum.selectedAddress).toLowerCase()){
+                    role = "SP";
+                    $("#metadata").html("<a onclick='decryptMetadata()'>" + transactionDetail[12] + "</a><br>");
+                    $("#metadataheader").append("<br>(Click to decrypt)");
+                    $("#special").show();
+                }else{
+                    role = "none";
+                    $("#metadata").html("Access denied.");
+                }
+                $("#dateCreation").html(transactionDetail[3]);
+                $("#lastUpdate").html(transactionDetail[10]);
+                $("#datePaymentPerformanceBased").html(transactionDetail[3]);
+                $("#datePaymentNonPerformanceBased").html(transactionDetail[4]);
+                $("#dateFulfillment").html(transactionDetail[5]);
+                
+                $("#datePaymentPerformanceBasedN").html(transactionDetail[3]);
+                $("#datePaymentNonPerformanceBasedN").html(transactionDetail[4]);
+                $("#dateFulfillmentN").html(transactionDetail[5]);
+                $("#deadlineFulfillment").html(transactionDetail[7]);
+                $("#deadlinePayment").html(transactionDetail[8]);
+
+                $("#deadlinePaymentNonPerformanceBased2").html(transactionDetail[8]);
+                $("#deadlineFulfillment2").html(transactionDetail[7]);
+                $("#deadlinePaymentPerformanceBased2").html(transactionDetail[9]);
+                updateStatus("Fetched transaction Details!");
+
+                tippingdeadline = transactionDetail[9];
+                setButtons(transactionDetail[11]);
+                
+
+                $("#loaded").show();
+                $("#loading").hide();
+            }catch(e){
+                updateStatus(e);
+                updateStatus("Transaction detail for user could not be fetched.");
+            }
+        }
+
+        function setButtons(status){
+            switch (status){
+                case "Created":
+                    if (role == "SC"){
+                        $("#nonperformancebasedpayment").removeClass('uk-button-default').addClass('uk-button-danger');
+                    }
+                    break;
+                case "Paid":
+                    if (role == "SP"){
+                        $("#setFulfilled").removeClass('uk-button-default').addClass('uk-button-danger');
+                    }
+                    break;
+                case "Fulfilled":
+                    if (role == "SC"  && !tippingDeadlineDue(tippingdeadline)){
+                        $("#performancebasedpayment").removeClass('uk-button-default').addClass('uk-button-danger');
+                    }else if (role == "SP" && tippingDeadlineDue(tippingdeadline)){
+                        $("#counterrating").removeClass('uk-button-default').addClass('uk-button-danger');
+                    }
+                    break;
+                case "Tipped":
+                    break;
+                case "Counterrated":
+                    break;
+            }
+        }
+
+        async function encrypt(){
+            var pk = await window.contract.methods.addressPublicKey(ethereum.selectedAddress).call();
+            if (pk == ""){
+                UIkit.modal.dialog("<p style='padding:2em;'><a onclick='getPublicKey()'>Upload your Public Key</a> before encryption.</p>");
+                return
+            }
+            $.post("/encrypt",
+            {
+                publickey: pk,
+                message: $("#setmetadata").val()
+            },
+            function(data, status){
+                $("#setmetadata").val(data);
+                $("#setmetadata").attr('disabled', true);                    
+                if (role == "SP"){
+                    $("#metadataSP").append("<button class='uk-button uk-button-default' onclick='uploadMetadata()'>Upload</button>");
+                }else if (role == "SC"){
+                    $("#metadataSC").append("<button class='uk-button uk-button-default' onclick='uploadMetadata()'>Upload</button>");
+                }
+            });
+        }
+
+
+        async function nonPerformanceBasedPayment(){
+            try{
+                var amount = $("#nonPerformanceBased").text();
+                await transactionConnection.methods.payNonPerformanceBased().send({from: ethereum.selectedAddress, value: amount});
+                location.reload();
+            }catch(e){
+                console.log(e);
+            }
+        }
+
+        async function performanceBasedPayment(){
+            try{
+                var amount = $("#performanceBased").text();
+                await transactionConnection.methods.payPerformanceBased().send({from: ethereum.selectedAddress, value: amount});
+                location.reload();
+            }catch(e){
+                console.log(e);
+            }
+        }
+
+        async function setFulfilled(){
+            try{
+                await transactionConnection.methods.setFulfilled().send({from: ethereum.selectedAddress});
+                location.reload();
+            }catch(e){
+                console.log(e);
+            }
+        }
+
+        async function rateBack(){
+            try{
+                var rating = 1; // getten
+                await transactionConnection.methods.rateBack(rating).send({from: ethereum.selectedAddress});
+                location.reload();
+            }catch(e){
+                console.log(e);
+            }
+        }
+
+        async function withDraw(){
+            try{
+                await transactionConnection.methods.withDraw().send({from: ethereum.selectedAddress});
+                location.reload();
+            }catch(e){
+                console.log(e);
+            }
+        }   
+
+
+
+        $(document).ready(function(){
+            // sort by search term
+            $(async function() {
+                if (id != null){
+                    await loadTransactionDetails(id);
+                }
+                $("#myaddress").append("<a href='/mytransactions'>" + ethereum.selectedAddress + "</a>");
+                if (id == "" || id == null){
+                    $("#loading").append("<br><br>Please <a href='/transactionhistory'>select</a> a transaction first, by clicking on an ID.");
+                }
+
+                var username = await getUsername(ethereum.selectedAddress);
+                if (username != ""){
+                    $("#username").text("My Username: " + username);
+                }
+            });
+        });
+        
+  body(class="uk-background-muted uk-padding uk-panel")
+    include menu.html
+
+    h1= title
+
+
+    div(id="view" name="view")
+        <p id="myaddress">My Address </p>
+        <p id="username"></p>
+        <p id="hint"></p>
+        <div uk-grid>
+            <div class="uk-width-2-1@m">
+                <div id="loaded" style="display:none;">
+                    <table class="uk-table uk-table-striped" id="special" style="word-wrap:break-word;display:none;max-width:1300px">                         
+                        <tr>
+                            <th class="header"></td>
+                            <td></td>
+                            <td>Date</td>
+                            <td>Deadline</td>
+                        </tr>       
+                        <tr>
+                            <th class="header">Non Performance Based Payment</td>
+                            <td><button class='uk-button uk-button-default' id="nonperformancebasedpayment" style="text-align:left" onclick='nonPerformanceBasedPayment()'>Pay</button></td>
+                            <td id="datePaymentNonPerformanceBased"></td>
+                            <td id="deadlinePaymentNonPerformanceBased2"></td>
+                        </tr>       
+                        <tr>
+                            <th class="header">Fullfilled?</td>
+                            <td><button class='uk-button uk-button-default' id="setFulfilled" style="text-align:left" onclick='setFulfilled()'>Fulfilled?</button></td>
+                            <td id="dateFulfillment"></td>
+                            <td id="deadlineFulfillment2"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Performance Based Payment</td>
+                            <td><button class='uk-button uk-button-default' id="performancebasedpayment" style="text-align:left" onclick='performanceBasedPayment()'>Pay</button></td>
+                            <td id="datePaymentPerformanceBased"></td>
+                            <td id="deadlinePaymentPerformanceBased2"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Counter rating</td>
+                            <td><button class='uk-button uk-button-default' id="counterrating" style="text-align:left" onclick='rateBack()'>Rate Back</button></td>
+                        </tr>                    
+                        <tr>
+                            <th class="header">Withdraw</td>
+                            <td><button class='uk-button uk-button-default' id="withdraw" style="text-align:left" onclick='withDraw()'>Withdraw</button></td>
+                        </tr>
+                    </table>
+                    <table class="uk-table uk-table-striped" id="myTable" style="word-wrap:break-word;max-width:1300px">  
+                        <tr>
+                            <th class="header">Transaction Address</td>
+                            <td id="transactionaddress"></td>
+                        </tr>                      
+                        <tr>
+                            <th class="header">Transaction ID</td>
+                            <td id="transactionid"></td>
+                        </tr>    
+                        <tr>
+                            <th class="header">Created</th>
+                            <td id="dateCreation"></td>
+                        </tr>               
+                        <tr>
+                            <th class="header">Last Updated</th>
+                            <td id="lastUpdate"></td>
+                        </tr>                        
+                        <tr>
+                            <th class="header">Status</th>
+                            <td id="status"></td>
+                        </tr>            
+                        <tr>
+                            <th class="header">Performance Based Payment</td>
+                            <td id="performanceBased"></td>
+                        </tr>                    
+                        <tr>
+                            <th class="header">Non Performance Based Payment</td>
+                            <td id="nonPerformanceBased"></td>
+                        </tr>                   
+                        <tr>
+                            <th class="header">Total</td>
+                            <td id="total"></td>
+                        </tr>                    
+                        <tr>
+                            <th class="header">Ratio (PB of total)</td>
+                            <td id="ratio"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Service Customer</td>
+                            <td id="servicecustomer"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Service Provider</td>
+                            <td id="serviceprovider"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Product Type</th>
+                            <td id="producttype"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Service Type</th>
+                            <td id="servicetype"></td>
+                        </tr>
+                        <tr>
+                            <th class="header" id="metadataheader">Metadata</th>
+                            <td id="metadata" style="word-wrap: break-word;max-width:100px;"></td>
+                        </tr>                                                       
+                        <tr>
+                            <th class="header">Date Payment Non Performance Based</th>
+                            <td id="datePaymentNonPerformanceBasedN"></td>
+                        </tr>                    
+                        <tr>
+                            <th class="header">Date Payment Performance Based</th>
+                            <td id="datePaymentPerformanceBasedN"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Date Fulfillment</th>
+                            <td id="dateFulfillmentN"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Deadline Fulfillment</th>
+                            <td id="deadlineFulfillment"></td>
+                        </tr>
+                        <tr>
+                            <th class="header">Deadline Payment</th>
+                            <td id="deadlinePayment"></td>
+                        </tr>
+                    </table>
+                </div>
+                <a onclick="redirectTransactionCreationSimilar()" class="uk-button uk-button-danger">Create Transaction like this</a>
+                <div id="loading" style="text-align:center">
+                    <div uk-spinner="ratio: 3"></div>
+                </div>
+            </div>
+        </div>

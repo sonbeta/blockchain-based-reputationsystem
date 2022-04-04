@@ -1,0 +1,490 @@
+extends layout
+
+block content
+  head
+    style
+        include ../public/stylesheets/normalize.css
+        include ../public/stylesheets/uikit.min.css
+        include ../public/stylesheets/theme.default.min.css
+    script(src="/javascripts/web3.min.js") 
+    script(src="/javascripts/jquery.min.js") 
+    script(src="/javascripts/uikit.min.js")
+    script(src="/javascripts/uikit-icons.min.js")
+    script(src="/javascripts/jquery.tablesorter.js")
+    script(src="/javascripts/reputationsystem_abi.js")
+    script(src="/javascripts/reputationsystemaddress.js")    
+    script(src="/javascripts/transaction_abi.js")
+    script(src="/javascripts/functions.js")
+    script(src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js")
+    script.    
+        var publicKey = null;
+        var leftChart;
+        var rightChart;
+        var init = false;
+        var tempUser;
+        var tempRole;
+        var focusServiceType = false;
+
+        async function getUsers(){
+            updateStatus("Getting users..");
+            try{
+                var users = [];
+                var i = 0;
+                while (true){
+                    try{
+                        users.push(await window.contract.methods.verifiedUsersList(i).call());
+                        i++;
+                    }catch(e){
+                        break;
+                    }
+                }
+                updateStatus(users);
+                for(const elem of users){
+                    var verificationDate = await getVerificationDate(elem);
+                    var userDetails = await getUserDetails(elem);
+                    var username = await getUsername(elem);
+                    $("#userstablebody").append(`
+                    <tr>
+                        <td class="tableentry">${username}</td>
+                        <td class="tableentry"><a href="/profile?user=${elem}">${elem}</a></td>
+                        <td class="tableentry">${verificationDate}</td>
+                        <td class="tableentry">${userDetails[0]} <br><br><a class="uk-button uk-button-default uk-button-small" onClick="loadDataCanvasServiceType('${elem}', 'SP')">Load</a></td>
+                        <td class="tableentry">${userDetails[1]} <br><br><a class="uk-button uk-button-default uk-button-small" onClick="loadDataCanvasServiceType('${elem}', 'SC')">Load</a></td>
+                        <td class="tableentry">${userDetails[2]}</td>
+                        <td class="tableentry">${userDetails[3]}</td>
+                        <td class="tableentry">${(userDetails[2]/((userDetails[2]+userDetails[3])/100)).toFixed(2)}</td>
+                        <td class="tableentry">${(userDetails[4]/((userDetails[4]+userDetails[5])/100)).toFixed(2)}</td>
+                        
+                    </tr>`);
+                }       
+                // all data is loaded         
+                $("#loading").hide();
+                $("#userstablebody").show();
+            }catch(e){
+                updateStatus(e);
+            }
+        }
+
+
+        async function getUserDetails(user){       
+            updateStatus("Getting transaction history from blockchain...");
+            
+            var i = 0;
+            var noError = true;
+            var countTransactionSP = 0;
+            var countTransactionSC = 0;
+            var sumPerformanceBasedPaymentSP = 0;
+            var sumNonPerformanceBasedPaymentSP = 0;
+            var sumPerformanceBasedPaymentSC = 0;
+            var sumNonPerformanceBasedPaymentSC = 0;
+
+            while (true){
+                try{
+                    var transactionAddress = await window.contract.methods.transactionHistory(i).call();
+                    var transactionDetail = await getTransactionDataShort(transactionAddress);
+                    let status = transactionDetail[2];
+                    let serviceProviderAddress = transactionDetail[0];
+                    let serviceCustomerAddress = transactionDetail[1];
+                    let amountPerformanceBasedPayment = transactionDetail[5];
+                    let amountNonPerformanceBasedPayment = transactionDetail[6];
+
+                    if (serviceProviderAddress == user){
+                        if (status == "Rated" ){
+                            // rating was paid
+                            countTransactionSP++;
+                            sumNonPerformanceBasedPaymentSP += parseInt(amountNonPerformanceBasedPayment);
+                            sumPerformanceBasedPaymentSP += parseInt(amountPerformanceBasedPayment);
+                        }else if (status == "Counterrated"){
+                            // deadline for rating is due
+                            countTransactionSP++;
+                            sumNonPerformanceBasedPaymentSP += parseInt(amountNonPerformanceBasedPayment);
+                        }
+                    }else if (serviceCustomerAddress == user){
+                        if (status == "Rated" ){
+                            // rating was paid
+                            countTransactionSC++;
+                            sumNonPerformanceBasedPaymentSC += parseInt(amountNonPerformanceBasedPayment);
+                            sumPerformanceBasedPaymentSC += parseInt(amountPerformanceBasedPayment);
+                        }else if (status == "Counterrated"){
+                            // deadline for rating is due
+                            countTransactionSC++;
+                            sumNonPerformanceBasedPaymentSC += parseInt(amountNonPerformanceBasedPayment);
+                        }
+                    }
+
+                    i++;
+                }catch(e){
+                    break;
+                }
+            }
+            return [countTransactionSP, countTransactionSC, sumPerformanceBasedPaymentSP, sumNonPerformanceBasedPaymentSP, sumPerformanceBasedPaymentSC, sumNonPerformanceBasedPaymentSC];
+        }
+        
+        //searchable, sortable, clickable table functions
+        $(document).ready(function(){
+            // sort by search term
+            $("#searchterm").on("keyup", function() {
+                var value = $(this).val().toLowerCase();
+                $("#transactionhistorybody tr").filter(function() {
+                $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
+                });
+            });
+            // sort by header
+            $('th').click(function(){
+                var table = $(this).parents('table').eq(0)
+                var rows = table.find('tr:gt(0)').toArray().sort(comparer($(this).index()))
+                this.asc = !this.asc
+                if (!this.asc){rows = rows.reverse()}
+                for (var i = 0; i < rows.length; i++){table.append(rows[i])}
+            })
+            function comparer(index) {
+                return function(rowOne, rowTwo) {
+                    var valueOne = getCellValue(rowOne, index)
+                    var valueTwo = getCellValue(rowTwo, index)
+                    return $.isNumeric(valueOne) && $.isNumeric(valueTwo) ? valueOne - valueTwo : valueOne.toString().localeCompare(valueTwo)
+                }
+            }
+            function getCellValue(row, index){ return $(row).children('td').eq(index).text() }
+
+            $(function() {
+                $("#myTable").tablesorter({ sortList: [[0,0]] });
+            });
+
+            //loadCanvas();
+
+            $(async function() {
+                await loadCanvas();
+                //await loadDataCanvasServiceType("0x107d4Fe07B723A6FaE0f2c3eBA999EEFF35A34C3");
+            });
+        });
+
+        // only service types
+        async function loadDataCanvasServiceType(user, role){
+            $("#hint").hide();
+
+            $("#headerLeftChart").text("Performance by Service Types for " + await getUsername(user) + " as " + role);
+            $("#headerRightChart").text("# Transactions by Service Types for " + await getUsername(user) + " as " + role);
+
+            // save in global scope
+            tempUser = user;
+            tempRole = role;
+            focusServiceType = false;
+            init = true;
+
+            var dictServiceTypes = {};
+            var arrServiceTypes = [];
+
+            var i = 0;
+            while (true){
+                try{
+                    var transactionAddress = await window.contract.methods.transactionHistory(i).call();
+                    i++;
+                    var transactionDetail = await getTransactionDataShort(transactionAddress);
+                    var serviceProviderAddress = transactionDetail[0];
+                    var serviceCustomerAddress = transactionDetail[1];
+                    var status = transactionDetail[2];
+                    var productType = transactionDetail[3];
+                    var serviceType = transactionDetail[4];
+                    var amountPerformanceBasedPayment = parseInt(transactionDetail[5]);
+                    var amountNonPerformanceBasedPayment = parseInt(transactionDetail[6]);
+
+                    if (role == "SP"){
+                        if (user != serviceProviderAddress){
+                            continue;
+                        }
+                    }else if (role == "SC"){
+                        if (user != serviceCustomerAddress){
+                            continue;
+                        }
+                    }
+
+                    // status is neither Rated or Counterrated
+                    if (status != "Rated" && status != "Counterrated"){
+                        continue;
+                    }
+
+                    if (dictServiceTypes[serviceType] == undefined){
+                        dictServiceTypes[serviceType] = [amountPerformanceBasedPayment, amountNonPerformanceBasedPayment, 1];
+                        arrServiceTypes.push(serviceType);
+                    }else{
+                        dictServiceTypes[serviceType] = [dictServiceTypes[serviceType][0] + amountPerformanceBasedPayment, 
+                                                        dictServiceTypes[serviceType][1] + amountNonPerformanceBasedPayment,
+                                                        dictServiceTypes[serviceType][2] + 1];
+                    }
+                }catch(e){
+                    break;
+                }
+            }
+
+            try{
+                aggregateDataServiceTypes(dictServiceTypes, arrServiceTypes);
+            }catch(e){
+                console.log(e);
+            }
+        }
+
+        function aggregateDataServiceTypes(dictServiceTypes, arrServiceTypes){        
+            var serviceTypesPerformance = [];
+            var serviceTypesTransactionCount = [];
+            for(var i = 0; i < arrServiceTypes.length; i++){
+                let lableName = arrServiceTypes[i];
+                serviceTypesPerformance.push((dictServiceTypes[lableName][0]/((dictServiceTypes[lableName][0]+dictServiceTypes[lableName][1])/100)).toFixed(3));
+                serviceTypesTransactionCount.push(dictServiceTypes[lableName][2]);
+            }
+            console.log(serviceTypesPerformance);
+            console.log(serviceTypesTransactionCount);
+            loadCanvas(arrServiceTypes, serviceTypesPerformance, serviceTypesTransactionCount)
+        }
+
+        // only service types
+        async function loadDataCanvasProductType(user, _serviceType, role){
+            $("#headerLeftChart").text("Performance by Product Types (in '" + _serviceType + "' for " + await getUsername(user)  + " as " + role + ")");
+            $("#headerRightChart").text("#Transactions by Product Types (in '" + _serviceType + "' for " + await getUsername(user)  + " as " + role + ")");
+
+            focusServiceType = true;
+
+            var dictProductTypes = {};
+            var arrProductTypes = [];
+
+            var i = 0;
+            while (true){
+                try{
+                    var transactionAddress = await window.contract.methods.transactionHistory(i).call();
+                    i++;
+                    var transactionDetail = await getTransactionDataShort(transactionAddress);
+                    var serviceProviderAddress = transactionDetail[0];
+                    var serviceCustomerAddress = transactionDetail[1];
+                    var status = transactionDetail[2];
+                    var productType = transactionDetail[3];
+                    var serviceType = transactionDetail[4];
+                    var amountPerformanceBasedPayment = parseInt(transactionDetail[5]);
+                    var amountNonPerformanceBasedPayment = parseInt(transactionDetail[6]);
+
+                    if (role == "SP"){
+                        if (user != serviceProviderAddress){
+                            continue;
+                        }
+                    }else if (role == "SC"){
+                        if (user != serviceCustomerAddress){
+                            continue;
+                        }
+                    }
+
+                    // status is neither Rated or Counterrated
+                    if (status != "Rated" && status != "Counterrated"){
+                        continue;
+                    }
+                    if (serviceType != _serviceType){
+                        continue;
+                    }
+
+                    if (dictProductTypes[productType] == undefined){
+                        dictProductTypes[productType] = [amountPerformanceBasedPayment, amountNonPerformanceBasedPayment, 1];
+                        arrProductTypes.push(productType);
+                    }else{
+                        dictProductTypes[productType] = [dictProductTypes[productType][0] + amountPerformanceBasedPayment, 
+                                                        dictProductTypes[productType][1] + amountNonPerformanceBasedPayment,
+                                                        dictProductTypes[productType][2] + 1];
+                    }
+                    
+                }catch(e){
+                    break;
+                    updateStatus(e);
+                }          
+            }
+            try{
+                aggregateDataProductTypes(dictProductTypes, arrProductTypes);
+            }catch(e){
+                console.log(e);
+            }
+        }
+
+        function aggregateDataProductTypes(dictProductTypes, arrProductTypes){        
+            var productTypesPerformance = [];
+            var productTypesTransactionCount = [];
+            for(var i = 0; i < arrProductTypes.length; i++){
+                let lableName = arrProductTypes[i];
+                productTypesPerformance.push((dictProductTypes[lableName][0]/((dictProductTypes[lableName][0]+dictProductTypes[lableName][1])/100)).toFixed(3));
+                productTypesTransactionCount.push(dictProductTypes[lableName][2]);
+            }
+            console.log(productTypesPerformance);
+            console.log(productTypesTransactionCount);
+            loadCanvas(arrProductTypes, productTypesPerformance, productTypesTransactionCount)
+        }
+
+        function loadCanvas(labelsData, performanceData, countData){
+            try{
+                leftChart.destroy();
+                rightChart.destroy();
+            }catch(e){
+                
+            }
+            if (labelsData == null || performanceData == null || countData == null){
+                labelsData = ["Label1", "Label2", "Label3"];
+                performanceData = [0.5,0.75,1];
+                countData = [1,2,3];
+                $("#hint").text("Select a User by clicking 'load'-Button in Table.");
+            }
+            const ctx = $('#leftChart');
+            leftChart = new Chart(ctx, {
+                type: 'polarArea',
+                data: {
+                    labels: labelsData,
+                    datasets: [{
+                        label: '# of Votes',
+                        data: performanceData,
+                        backgroundColor: [
+                            'rgba(255, 99, 132, 0.2)',
+                            'rgba(54, 162, 235, 0.2)',
+                            'rgba(255, 206, 86, 0.2)',
+                            'rgba(75, 192, 192, 0.2)',
+                            'rgba(153, 102, 255, 0.2)',
+                            'rgba(255, 159, 64, 0.2)'
+                        ],
+                        borderColor: [
+                            'rgba(255, 99, 132, 1)',
+                            'rgba(54, 162, 235, 1)',
+                            'rgba(255, 206, 86, 1)',
+                            'rgba(75, 192, 192, 1)',
+                            'rgba(153, 102, 255, 1)',
+                            'rgba(255, 159, 64, 1)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {    
+                    onClick: (event, element, chart) => {
+                        //console.log('Active element list: ', chart.data.labels[element[0].index], chart.data.datasets[element[0].datasetIndex].data[element[0].index]);
+
+                        // serviceType was Clicked
+                        // if canvas is not focused on a serviceType already then focus more
+                        if (!focusServiceType && init){
+                            focusServiceType = true;
+                            loadDataCanvasProductType(tempUser, chart.data.labels[element[0].index], tempRole);
+                        }
+                    },
+                    scale: {
+                        ticks: {
+                            suggestedMin: 2,
+                            suggestedMax: 100
+                        }
+                    },
+                    responsive: false
+                    
+                }
+            });
+
+
+            const ctx2 = $('#rightChart');
+            rightChart = new Chart(ctx2, {
+                type: 'pie',
+                data: {
+                    labels: labelsData,
+                    datasets: [{
+                        label: '# of Transactions',
+                        data: countData,
+                        backgroundColor: [
+                            'rgba(255, 99, 132, 0.2)',
+                            'rgba(54, 162, 235, 0.2)',
+                            'rgba(255, 206, 86, 0.2)',
+                            'rgba(75, 192, 192, 0.2)',
+                            'rgba(153, 102, 255, 0.2)',
+                            'rgba(255, 159, 64, 0.2)'
+                        ],
+                        borderColor: [
+                            'rgba(255, 99, 132, 1)',
+                            'rgba(54, 162, 235, 1)',
+                            'rgba(255, 206, 86, 1)',
+                            'rgba(75, 192, 192, 1)',
+                            'rgba(153, 102, 255, 1)',
+                            'rgba(255, 159, 64, 1)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {    
+                    onClick: (event, element, chart) => {
+                        //console.log('Active element list: ', chart.data.labels[element[0].index], chart.data.datasets[element[0].datasetIndex].data[element[0].index]);
+
+                        // serviceType was Clicked
+                        // if canvas is not focused on a serviceType already then focus more
+                        if (!focusServiceType && init){
+                            focusServiceType = true;
+                            loadDataCanvasProductType(tempUser, chart.data.labels[element[0].index], tempRole);
+                        }
+                    },
+                    scale: {
+                        ticks: {
+                            suggestedMin: 2,
+                            suggestedMax: 100
+                        }
+                    },
+                    responsive: false
+                    
+                }
+            });
+        }
+
+  body(class="uk-background-muted uk-padding uk-panel")
+    include menu.html
+
+    h1= title
+    h4#hint
+
+    div(id="view" name="view")
+        <table>
+            <tr>
+                <th id="headerLeftChart">Performance by Product Types by Ratio</th>
+                <th></th>
+                <th id="headerRightChart"># Transactions by Product Types</th>
+                <th></th>
+            </tr>
+            <tr>
+                <td>
+                    <canvas id="leftChart" width="350" height="350"></canvas>
+                </td>
+                <td>
+                    <p>                                        </p>
+                </td>
+                <td>
+                    <canvas id="rightChart" width="350" height="350"></canvas>
+                </td>
+                <td>
+                    <p>Only transactions that are finished are considered for the reputation calculation.</p>
+                    <p>Ratios are between 0 and 100. 
+                    <br>100 means, that transactions were purely based on performance-based Transactions e.g. "full trust"
+                    <br>0 means, that transactions were purely based on non-performance-based Transactions e.g. "no trust"</p>
+                    <p></p>
+                    <p>Brief explanation: 
+                    <br>- Choose a user by clicking 'load'
+                    <br>- then the reputation of a user in each service type, are shown. 
+                    <br>- reputation for subtypes of a service type are shown by clicking on an element in the chart
+                    <br>- Hovering over an chart-element shows details about that element <br>(e. g. ratio in a specific category, transaction count in a specific category)</p>
+                </td>
+            </tr>
+        </table>
+        <div class="searchable-header">
+        <input type="text" id="searchterm" placeholder="Search table...">
+            <table class="uk-table uk-table-striped uk-table-hover" id="myTable">
+                <thead>
+                    <tr>
+                        <th class="header">Nickname</th>
+                        <th class="header">User Address</th>
+                        <th class="header">Verified since</th>
+                        <th class="header">#Transactions SP</th>
+                        <th class="header">#Transactions SC</th>
+                        <th class="header">Performance Based Payment (PBP) Total</th>
+                        <th class="header">Non Performance Based Payment (NPBP) Total</th>
+                        <th class="header">Ratio SP</th>
+                        <th class="header">Ratio SC</th>
+                    </tr>
+                </thead>
+                <tbody id="userstablebody" style="display:none">
+                </tbody>
+            </table>               
+            <div id="loading" style="text-align:center">
+                    <div uk-spinner="ratio: 3"></div>
+            </div>
+        </div>
+
+    <script>getUsers();</script>
